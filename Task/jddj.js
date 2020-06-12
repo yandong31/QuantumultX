@@ -1,4 +1,5 @@
 /*
+更新时间: 2020-06-08 20:45
 
 > 感谢 [@barry](https://t.me/barrymchen) 编写
 > 感谢 [@GideonSenku](https://github.com/GideonSenku) 对代码优化
@@ -23,8 +24,7 @@ Surge 4.0 :
 ~~~~~~~~~~~~~~~~~~~~
 Loon 2.1.0+
 [Script]
-# 本地脚本
-cron "04 00 * * *" script-path=jddj.js, enabled=true, tag=京东到家
+cron "04 00 * * *" script-path=https://raw.githubusercontent.com/Sunert/Scripts/master/Task/jddj.js, enabled=true, tag=京东到家
 
 http-request https:\/\/daojia\.jd\.com\/client\?_jdrandom=\d{13}&functionId=%2Fsignin script-path=https://raw.githubusercontent.com/Sunert/Scripts/master/Task/jddj.js
 
@@ -46,7 +46,7 @@ task
 0 0 * * * jddj.js
 
 */
-
+const logs = 0   //日志开关
 const CookieName ='京东到家'
 const CookieKey = 'sy_cookie_dj'
 const sy = init()
@@ -94,7 +94,7 @@ function sign() {
     let url = {url: 'https://daojia.jd.com/client?functionId=signin%2FuserSigninNew&body=%7B%7D',
     headers: { Cookie:cookieVal}}   
     sy.get(url, (error, response, data) => {
-      sy.log(`${CookieName}, data: ${data}`)
+      if(logs) sy.log(`${CookieName}, data: ${data}`)
       let result = JSON.parse(data)
        if (result.code == 0) {
         //subTitle = `签到结果: 成功🎉`
@@ -103,7 +103,7 @@ function sign() {
     })
       let url2 = {url: `https://daojia.jd.com/client?functionId=signin%2FshowSignInMsgNew&body=%7B%7D`, headers: { Cookie:cookieVal}}   
       sy.get(url2, (error, response, data) => {
-      sy.log(`${CookieName}, data: ${data}`)
+      if(logs)sy.log(`${CookieName}, data: ${data}`)
       let result = JSON.parse(data)
       if (result.code != 0) {
       subTitle = `签到结果: 失败`
@@ -125,7 +125,7 @@ function sign() {
        } 
      }       
      sy.msg(title, subTitle, detail)
-     sy.log(`返回结果代码:${result.code}，返回信息:${result.msg}`)
+     sy.log(subTitle+`\n`+ detail)
    })
  }
 
