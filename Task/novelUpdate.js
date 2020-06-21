@@ -1,67 +1,77 @@
-/**
- *  疫情日报，自动获取当前位置的疫情信息
- *  API来自 http://api.tianapi.com/txapi/ncov/
- *  @author: Peng-YM
- *  感谢 @Mazetsz 提供腾讯API接口Token
- *  更新地址: https://raw.githubusercontent.com/Peng-YM/QuanX/master/Tasks/nCov.js
- */
+//   原author: Peng-YM
+//   原项目地址: https://github.com/Peng-YM/QuanX/blob/master/Tasks/zongheng.js
+//   更新数据来源: 优书网
+//   优书网查询书籍后复制id填入id列表，弹窗跳转爱阅书香
 
-const $ = API("nCov");
+// 书籍id列表
+const ids = ["169413"];
+const alwaysNotice = false; // 设置为true则每次运行通知，否则只通知更新
 
-const key = "NOUBZ-7BNHD-SZ64A-HUWCW-YBGZ7-DDBNK";
-const headers = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36",
+/********************************* SCRIPT START *******************************************************/
+const $ = API("yousuu");
+
+const parsers = {
+  title: new RegExp(/class="book-name"[\s\S]*?>(.*?)</),
+  coverURL: new RegExp(/"cover":"(.*?)"/),
+  updateTime: new RegExp(/更新时间\S\s*<span.+?>(.*?)</),
+  author: new RegExp(/"author":"(.*?)"/),
 };
+// check update
+checkUpdate($.read("books") || {}).finally(() => $.done());
 
-!(async () => {
-  // get current location
-  const province = await $.get(`https://apis.map.qq.com/ws/location/v1/ip?key=${key}`).then(resp => {
-    const data = JSON.parse(resp.body);
-    return data.result.ad_info.province;
-  });
-  $.log(province);
-  console.log(province);
-  const newslist = await $.get({
-    url: "http://api.tianapi.com/txapi/ncov/index?key=5dcf1a3871f36bcc48c543c8193223fc",
-    headers,
-  }).then((resp) => JSON.parse(resp.body).newslist[0])
-    .delay(1000);
-  $.log(newslist);
-  console.log(newslist);
-  let desc = newslist.desc;
-  let news = newslist.news[0];
-  let title = "🗞【疫情信息概览】";
-  let subtitle = `📅  ${formatTime()}`;
-  let detail = 
-    "\n「全国数据」" +
-    "\n\n    -新增确诊: " +
-    desc.confirmedIncr +
-    "\n    -现有确诊: " +
-    desc.currentConfirmedCount +
-    "\n    -累计确诊: " +
-    desc.confirmedCount +
-    "\n    -治愈: " +
-    desc.curedCount +
-    "\n    -死亡: " +
-    desc.deadCount +
-    "\n\n「疫情动态」\n\n     " +
-    news.title +
-    "\n\n「动态详情」\n\n     " +
-    news.summary +
-    "\n\n    发布时间：" +
-    news.pubDateStr;
-  $.notify(title, subtitle, detail);
-})()
-  .catch((err) => $.error(err))
-  .finally(() => $.done());
+async function checkUpdate(books) {
+  await Promise.all(
+    ids.map(async (id) => {
+      $.log(`Handling book with id: ${id}...`);
+      // check update from each book
+      const config = {
+        url: `http://www.yousuu.com/book/${id}`,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36",
+        },
+      };
 
-function formatTime() {
-    const date = new Date();
-    return `${
-        date.getMonth() + 1
-    }月${date.getDate()}日 ${date.getHours()}时`;
+      await $.get(config)
+        .then((response) => {
+          const html = response.body;
+          // parse html
+          const book = {
+            title: html.match(parsers.title)[1],
+            coverURL: html.match(parsers.coverURL)[1].replace(/\\u002F/g,'/'),
+            updateTime: html.match(parsers.updateTime)[1],
+           
+            author: html.match(parsers.author)[1],
+          };
+          $.log(book);
+          const cachebook = books[id];
+          if (
+            cachebook === undefined ||
+            alwaysNotice ||
+            updateTime !== cachebook.updateTime
+          ) {
+            // upate database
+            books[id] = book;
+            // push notifications
+            $.notify(
+              `🎉🎉🎉 《${book.title}》更新`,
+              `⏰ 更新时间: ${book.updateTime}前`,
+              `🎩作者: ${book.author}`,
+              {
+                "open-url": `iFreeTime://bk/a=${encodeURIComponent(book.author)}&n=${encodeURIComponent(book.title)}&d=0`,
+                "media-url": book.coverURL,
+              }
+            );
+          }
+        })
+        .catch((e) => $.error(e));
+    })
+  );
+
+  // update database
+  $.write(books, "books");
 }
+/********************************* SCRIPT END *******************************************************/
 
 // prettier-ignore
 /*********************************** API *************************************/

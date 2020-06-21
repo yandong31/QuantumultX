@@ -1,18 +1,107 @@
 //京东萌宠助手 搬得https://github.com/liuxiaoyucc/jd-helper/blob/master/pet/pet.js
-//只能quanx用
+
+const $hammer = (() => {
+    const isRequest = "undefined" != typeof $request,
+        isSurge = "undefined" != typeof $httpClient,
+        isQuanX = "undefined" != typeof $task;
+
+    const log = (...n) => { for (let i in n) console.log(n[i]) };
+    const alert = (title, body = "", subtitle = "", link = "") => {
+        if (isSurge) return $notification.post(title, subtitle, body, link);
+        if (isQuanX) return $notify(title, subtitle, (link && !body ? link : body));
+        log("==============📣系统通知📣==============");
+        log("title:", title, "subtitle:", subtitle, "body:", body, "link:", link);
+    };
+    const read = key => {
+        if (isSurge) return $persistentStore.read(key);
+        if (isQuanX) return $prefs.valueForKey(key);
+    },
+        write = (key, val) => {
+            if (isSurge) return $persistentStore.write(key, val);
+            if (isQuanX) return $prefs.setValueForKey(key, val);
+        };
+    const request = (method, params, callback) => {
+        /**
+         * 
+         * params(<object>): {url: <string>, headers: <object>, body: <string>} | <url string>
+         * 
+         * callback(
+         *      error, 
+         *      {status: <int>, headers: <object>, body: <string>} | ""
+         * )
+         * 
+         */
+        let options = {};
+        if (typeof params == "string") {
+            options.url = params;
+        } else {
+            options.url = params.url;
+            if (typeof params == "object") {
+                params.headers && (options.headers = params.headers);
+                params.body && (options.body = params.body);
+            }
+        }
+        method = method.toUpperCase();
+
+        const writeRequestErrorLog = function (m, u) {
+            return err => {
+                log("=== request error -s--");
+                log(`${m} ${u}`, err);
+                log("=== request error -e--");
+            };
+        }(method, options.url);
+
+        if (isSurge) {
+            const _runner = method == "GET" ? $httpClient.get : $httpClient.post;
+            return _runner(options, (error, response, body) => {
+                if (error == null || error == "") {
+                    response.body = body;
+                    callback("", response);
+                } else {
+                    writeRequestErrorLog(error);
+                    callback(error, "");
+                }
+            });
+        }
+        if (isQuanX) {
+            options.method = method;
+            $task.fetch(options).then(
+                response => {
+                    response.status = response.statusCode;
+                    delete response.statusCode;
+                    callback("", response);
+                },
+                reason => {
+                    writeRequestErrorLog(reason.error);
+                    callback(reason.error, "");
+                }
+            );
+        }
+    };
+    const done = (value = {}) => {
+        if (isQuanX) return isRequest ? $done(value) : null;
+        if (isSurge) return isRequest ? $done(value) : $done();
+    };
+    return { isRequest, isSurge, isQuanX, log, alert, read, write, request, done };
+})();
 
 //京东接口地址
 const JD_API_HOST = 'https://api.m.jd.com/client.action';
 //直接用NobyDa的js cookie
-const cookie = $prefs.valueForKey('CookieJD')
+const cookie = $hammer.read('CookieJD');
 
 var shareCodes = [ // 这个列表填入你要助力的好友的shareCode, 最多可能是5个? 没有验证过
     'MTAxODcxOTI2NTAwMDAwMDAwMDc4MDExNw==',
     'MTAxODcxOTI2NTAwMDAwMDAyNjA4ODQyMQ==',
+    'MTAxODc2NTEzMDAwMDAwMDAwNTUwNDUxMw==',
+    'MTAxODc2NTEzOTAwMDAwMDAxODQ5MDg5NQ==',
 ]
 
 var petInfo = null;
 var taskInfo = null;
+const name = '东东萌宠';
+let message = '';
+let subTitle = '';
 
 //按顺序执行, 尽量先执行不消耗狗粮的任务, 避免中途狗粮不够, 而任务还没做完
 var function_map = {
@@ -24,18 +113,22 @@ var function_map = {
     inviteFriendsInit: inviteFriendsInit, //邀请好友, 暂未处理
     feedReachInit: feedReachInit, //喂食10次任务  最后执行投食10次任务, 提示剩余狗粮是否够投食10次完成任务, 并询问要不要继续执行
 };
-
+let gen = entrance();
+gen.next();
 /**
  * 入口函数
  */
 function* entrance() {
+    if (!cookie) {
+        return $hammer.alert("京东萌宠", '请先获取cookie\n直接使用NobyDa的京东签到获取');
+    }
     console.log('任务开始');
     yield initPetTown(); //初始化萌宠
     yield taskInit(); // 初始化任务
 
     yield petSport(); // 遛弯
     yield slaveHelp();  // 助力, 在顶部shareCodes中填写需要助力的shareCode
-
+    yield masterHelpInit();//获取助力信息
 
     // 任务开始
     for (let task_name in function_map) {
@@ -48,7 +141,8 @@ function* entrance() {
     }
 
     yield energyCollect();
-
+    $hammer.alert(name, message, subTitle)
+    // $notify(name, subTitle, message);
     console.log('全部任务完成, 如果帮助到您可以点下🌟STAR鼓励我一下, 明天见~');
 }
 
@@ -60,6 +154,10 @@ function energyCollect() {
     let function_id = arguments.callee.name.toString();
     request(function_id).then(response => {
         console.log(`收取任务奖励好感度完成:${JSON.stringify(response)}`);
+        if (response.code === '0') {
+            message += `【第${petInfo.medalNum + 1}块勋章完成进度】：${response.result.medalPercent}%，还需投食${response.result.needCollectEnergy}g狗粮\n`;
+            message += `【已获得勋章】${petInfo.medalNum}块，还需收集${petInfo.goodsInfo.exchangeMedalNum - petInfo.medalNum}块即可兑换奖品“${petInfo.goodsInfo.goodsName}”\n`;
+        }
         gen.next();
     })
 }
@@ -123,7 +221,7 @@ function sleep(s) {
 async function petSport() {
     console.log('开始遛弯');
 
-    var times = 0;
+    var times = 1;
     var code = 0;
     var resultCode = 0;
 
@@ -139,7 +237,9 @@ async function petSport() {
 
         times++;
     } while (resultCode == 0 && code == 0)
-
+    if (times > 1) {
+        message += '已完成十次遛狗\n';
+    }
     gen.next();
 
 }
@@ -151,13 +251,21 @@ async function petSport() {
  */
 async function slaveHelp() {
     let functionId = arguments.callee.name.toString();
-
+    let helpPeoples = '';
     for (let code of shareCodes) {
         console.log(`开始助力好友: ${code}`);
         let response = await request(functionId, {
             shareCode: code
         });
-        console.log(`助理好友结果: ${response.message}`);
+        if (response.code === '0' && response.resultCode === '0') {
+            console.log('已给好友: 【' + response.result.masterNickName + '】助力');
+            helpPeoples += response.result.masterNickName + '，';
+        } else {
+            console.log(`助理好友结果: ${response.message}`);
+        }
+    }
+    if (helpPeoples && helpPeoples.length > 0) {
+        message += `已成功给${helpPeoples}助力\n`;
     }
 
     gen.next();
@@ -197,6 +305,7 @@ function getSingleShopReward() {
     console.log('准备浏览指定店铺');
     request(arguments.callee.name.toString()).then(response => {
         console.log(`浏览指定店铺结果: ${JSON.stringify(response)}`);
+        message += '【浏览指定店铺】成功,获取狗粮8g\n';
         gen.next();
     })
 }
@@ -206,7 +315,12 @@ function getThreeMealReward() {
     console.log('准备三餐签到');
     request(arguments.callee.name.toString()).then(response => {
         console.log(`三餐签到结果: ${JSON.stringify(response)}`);
-        gen.next();
+        if (response.code === '0' && response.resultCode === '0') {
+            message += `【定时领狗粮】获得${response.result.threeMealReward}g\n`;
+        } else {
+            message += `【定时领狗粮】${response.message}\n`;
+        }
+      gen.next();
     })
 }
 
@@ -215,6 +329,7 @@ function getSignReward() {
     console.log('准备每日签到');
     request(arguments.callee.name.toString()).then(response => {
         console.log(`每日签到结果: ${JSON.stringify(response)}`);
+        message += `【每日签到成功】奖励${response.result.signReward}g狗粮\n`;
         gen.next();
     })
 
@@ -238,8 +353,10 @@ function initPetTown() {
             petInfo = response.result;
             console.log(`初始化萌宠信息完成: ${JSON.stringify(petInfo)}`);
             console.log(`您的shareCode为: ${petInfo.shareCode}`);
-
-            gen.next();
+            subTitle = petInfo.goodsInfo.goodsName;
+            message += `【与爱宠相识】${petInfo.meetDays}天\n`;
+            message += `【剩余狗粮】${petInfo.foodAmount}g\n`;
+          gen.next();
         } else {
             console.log(`初始化萌宠失败:  ${JSON.stringify(petInfo)}`);
             gen.return();
@@ -256,6 +373,34 @@ function inviteFriendsInit() {
     }, 2000);
 }
 
+// 好友助力信息
+async function masterHelpInit() {
+  let res = await request(arguments.callee.name.toString());
+  console.log('助力信息: ' , res);
+  if (res.code === '0' && res.resultCode === '0' && (res.result.masterHelpPeoples && res.result.masterHelpPeoples.length >= 5)) {
+    if(!res.result.addedBonusFlag) {
+      console.log("开始领取额外奖励");
+      let getHelpAddedBonusResult = await getHelpAddedBonus();
+      console.log(`领取30g额外奖励结果：【${getHelpAddedBonusResult.message}】`);
+      message += `【额外奖励${getHelpAddedBonusResult.result.reward}领取】${getHelpAddedBonusResult.message}\n`;
+    } else {
+      console.log("已经领取过5好友助力额外奖励");
+      message += `【5好友助力额外奖励】已领取\n`;
+    }
+  } else {
+    console.log("助力好友未达到5个")
+    message += `【额外奖励领取失败】原因：助力好友未达5个\n`;
+  }
+  gen.next();
+}
+// 领取5好友助力后的奖励
+function getHelpAddedBonus() {
+  return new Promise((rs, rj)=> {
+    request(arguments.callee.name.toString()).then(response=> {
+      rs(response);
+    })
+  })
+}
 
 // 初始化任务, 可查询任务完成情况
 function taskInit() {
@@ -276,26 +421,23 @@ function taskInit() {
 async function request(function_id, body = {}) {
     await sleep(3); //歇口气儿, 不然会报操作频繁
     return new Promise((resolve, reject) => {
-        $task.fetch(taskurl(function_id,body)).then(
-            (res) => {
-                // $.log(response.body)
-                return JSON.parse(res.body)
-            },
-            (reason) => console.log(reason.error, reason)
-        ).then((response) => resolve(response))
-
+        $hammer.request('GET', taskurl(function_id,body), (error, response) => {
+            if(error){
+                $hammer.log("Error:", error);
+            }else{
+                resolve(JSON.parse(response.body));
+            }
+        })
     })
 }
 
 function taskurl(function_id, body = {}) {
     return {
-        url:`${JD_API_HOST}?functionId=${function_id}&appid=wh5&loginWQBiz=pet-town&body=${escape(JSON.stringify(body))}`,
+        url: `${JD_API_HOST}?functionId=${function_id}&appid=wh5&loginWQBiz=pet-town&body=${escape(JSON.stringify(body))}`,
         headers: {
-            Cookie: cookie
-        },
-        method: "GET",
-    }
+            Cookie: cookie,
+            UserAgent: `Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1`,
+        }
+    };
 }
 
-let gen = entrance();
-gen.next();

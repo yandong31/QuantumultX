@@ -1,7 +1,7 @@
 /*
-"滴滴出行" app 打车后忘领取的福利金自动领取，支持 Quantumult X（理论上也支持 Surge、Loon，未尝试）。
-默认已使用 DiDi.js，故请先使用 DiDi.js 获取 Token。
-到 cron 设定时间自动签到时，若弹出"滴滴出行 - 签到成功"即完成签到，其他提示或无提示请发送日志信息至 issue。
+"饿了么" app(9.0.10) "我的 - 打卡领红包"自动签到，支持 Quantumult X（理论上也支持 Surge、Loon，未尝试）。
+默认已使用 elemSign.js，故请先使用 elemGetCookies.js 获取 Token。(https://github.com/songyangzz/QuantumultX/blob/master/elem/elemGetCookies.js)
+到 cron 设定时间自动签到时，若弹出"饿了么 - 打卡领红包 - 打卡成功"即完成签到，其他提示或无提示请发送日志信息至 issue。
 
 ⚠️免责声明：
 1. 此脚本仅用于学习研究，不保证其合法性、准确性、有效性，请根据情况自行判断，本人对此不承担任何保证责任。
@@ -14,64 +14,58 @@
 
 Author：zZPiglet
 
-----------
-版本记录：
-- 2020/06/12：
-因为最近没有打车所以并未进行任何一次测试，请反馈问题以及时修正。
-由于暂时不确定此福利金领取期限，建议每天 23:59 执行此脚本。此脚本与主脚本暂时区分为两个脚本，未后续 aff 考虑建议主脚本不要太晚运行。若后期测试打车后福利金领取期限更长，考虑将此脚本合并至主脚本。
-----------
-
 Quantumult X (App Store:1.0.5+, TestFlight 190+):
 [task_local]
-59 23 * * * DiDi_reward.js
+1 0 * * * elemCheckIn.js, tag=饿了么-打卡领红包
 or remote
-59 23 * * * https://raw.githubusercontent.com/zZPiglet/Task/master/DiDi/DiDi_reward.js
+1 0 * * * https://raw.githubusercontent.com/zZPiglet/Task/master/elem/elemCheckIn.js, tag=饿了么-打卡领红包
 
 Surge 4.0+ & Loon:
 [Script]
-cron "59 23 * * *" script-path=https://raw.githubusercontent.com/zZPiglet/Task/master/DiDi/DiDi_reward.js
+cron "1 0 * * *" script-path=https://raw.githubusercontent.com/zZPiglet/Task/master/elem/elemCheckIn.js
 */
 
-const mainURL = 'https://api.udache.com/gulfstream/passenger/v2/other/'
+const CheckInURL = 'https://h5.ele.me/restapi/acquisition/dailyCheckIn/v1/checkIn'
 const $cmp = compatibility()
-const token = encodeURIComponent($cmp.read("DiDi"))
 Checkin()
 $cmp.done()
 
 function Checkin() {
-    let listURL = mainURL + 'pListReward?token=' + token
-    const list = {
-        url: listURL
+    let subTitle = ''
+    let detail = ''
+    const daily = {
+        url: CheckInURL,
+        headers: {
+            "Cookie": $cmp.read("cookie_elem")
+        }
     }
-    $cmp.get(list, function(error, response, data) {
+    $cmp.post(daily, function(error, response, data) {
         if (!error) {
-            let listresult = JSON.parse(data)
-            if (listresult.errno == 0) {
-                if (listresult.data) {
-                    let total = 0
-                    for (let l of listresult.data) {
-                        let order_id = l.oid
-                        let rewardURL = mainURL + 'pGetRewards?order_id=' + order_id + '&token=' + token
-                        const reward = {
-                            url: rewardURL
-                        }
-                        $cmp.get(reward, function (error, response, data) {
-
-                        })
-                        total += Number(l.bonus_info.amount)
-                    }
-                    $cmp.notify('滴滴出行 - 遗忘的福利金', '', '捡回遗忘的 ' + total + ' 元福利金。🤸🏼')
-                } else {
-                    $cmp.notify('滴滴出行 - 遗忘的福利金', '', '今天没有忘记领取的福利金～ 🎉')
-                }
+            if (response.statusCode == 401) {
+                subTitle += 'Token 未获取或失效❗'
+                detail += '请按脚本开头注释完成配置并首次或重新获取 Token。'
             } else {
-                $cmp.notify('滴滴出行 - 遗忘的福利金', 'Token 未获取或失效❗', '请按脚本开头注释完成配置并首次或重新获取 Token。\n' + listresult.errmsg)
-                $cmp.log("DiDi_reward failed response : \n" + listresult)
+                const result = JSON.parse(data)
+                if (result.code == 200) {
+                    subTitle += '打卡成功！🍗'
+                    let todayearn = result.data.checkInAmount / 100
+                    let total = result.data.currentAmount / 100
+                    detail += '打卡获得 ' + todayearn + ' 元，账户共有 ' + total + ' 元红包。'
+                } else if (result.code == 4003) {
+                    subTitle += '重复打卡！🥡'
+                    detail += result.message
+                } else {
+                    subTitle += '打卡失败‼️ 详情请见日志。'
+                    detail += data
+                    $cmp.log("elem failed response : \n" + data)
+                }
             }
         } else {
-            $cmp.notify('滴滴出行 - 遗忘的福利金', '领取接口请求失败，详情请见日志。', error)
-            $cmp.log("DiDi_reward failed response : \n" + error)
+            subTitle += '打卡接口请求失败，详情请见日志。'
+            detail += error
+            $cmp.log("elem failed response : \n" + error)
         }
+        $cmp.notify('饿了么 - 打卡领红包', subTitle, detail)
     })
 }
 
